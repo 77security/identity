@@ -45,5 +45,5 @@ jobs:
 
       - name: Deploy with Helm
         run: |
-          helm upgrade --install my-service ./helm/my-service \
+          helm upgrade --install identity ./helm/identity \
             --set image.tag=${{ github.sha }}
