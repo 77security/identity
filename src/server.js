@@ -37,6 +37,17 @@ const authenticate = async (req, res, next) => {
   }
 };
 
+// Simple Liveness Probe
+app.get('/health', (req, res) => {
+  res.status(200).send('OK');
+});
+
+// Simple Readiness Probe
+app.get('/ready', (req, res) => {
+  // You could add a check here to see if your DB is connected
+  res.status(200).send('Ready');
+});
+
 // --- 1. USER REGISTER ---
 app.post('/api/auth/register', async (req, res) => {
   const { email, password, region_code, industry, captcha_token } = req.body;
