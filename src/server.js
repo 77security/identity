@@ -246,5 +246,15 @@ app.get('/api/keys/verify', async (req, res) => {
   }
 });
 
+const cors = require('cors');
+
+const corsOptions = {
+  // Use a RegExp object, NOT a string
+  origin: /https?:\/\/(([^/]+\.)?77security\.com)$/i,
+  credentials: true
+};
+
+app.use(cors(corsOptions));
+
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => console.log(`77 Security Identity API running on port ${PORT}`));
