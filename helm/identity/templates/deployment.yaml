@@ -50,6 +50,11 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.env.databaseUrlSecretName }}
                   key: {{ .Values.env.databaseUrlSecretKey }}
+            - name: SMTP_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.env.smtpSecretName }}
+                  key: {{ .Values.env.smtpSecretKey }}
           {{- with .Values.livenessProbe }}
           livenessProbe:
             {{- toYaml . | nindent 12 }}
