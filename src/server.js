@@ -5,6 +5,7 @@ const { Pool } = require('pg');
 const cookieParser = require('cookie-parser');
 const cors = require('cors');
 const nodemailer = require('nodemailer');
+const { createClient } = require('redis');
 
 // --- LOGGING SETUP ---
 const logger = require('pino')({
