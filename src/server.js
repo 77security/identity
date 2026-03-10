@@ -207,7 +207,58 @@ app.post('/api/auth/register', async (req, res) => {
   }
 });
 
-// --- 2. EMAIL VERIFICATION ENDPOINT ---
+// (2) LOGIN
+app.post('/api/auth/login', async (req, res) => {
+  const { email, password } = req.body;
+  try {
+    const result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+    const user = result.rows[0];
+    if (!user || !(await bcrypt.compare(password, user.password_hash))) {
+      return res.status(401).json({ error: "Invalid credentials" });
+    }
+    if (!user.is_verified) return res.status(403).json({ error: "Verify email first" });
+
+    const sessionId = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    await pool.query('INSERT INTO sessions (id, user_id, expires_at) VALUES ($1, $2, $3)', [sessionId, user.id, expiresAt]);
+
+    res.cookie('session_id', sessionId, {
+      domain: '.77security.com',
+      httpOnly: true,
+      secure: true,
+      sameSite: 'Lax',
+      expires: expiresAt
+    });
+    res.json({ message: "Logged in" });
+  } catch (err) {
+    res.status(500).json({ error: "Login error" });
+  }
+});
+
+// --- 3. USER UPDATE PROFILE ---
+app.patch('/api/user/profile', authenticate, async (req, res) => {
+  const { region_code, industry_key, display_mode } = req.body;
+
+  try {
+    await pool.query(
+      `UPDATE profiles 
+       SET region_code = COALESCE($1, region_code), 
+           industry_key = COALESCE($2, industry_key), 
+           display_mode = COALESCE($3, display_mode),
+           updated_at = CURRENT_TIMESTAMP
+       WHERE user_id = $4`,
+      [region_code ? region_code.toUpperCase() : null, industry_key, display_mode, req.user_id]
+    );
+    req.log.info("Profile updated");
+    res.json({ message: "Profile updated successfully" });
+  } catch (err) {
+    req.log.error({ err }, "Profile update failed");
+    res.status(500).json({ error: "Failed to update profile" });
+  }
+});
+
+
+// --- 5. EMAIL VERIFICATION ENDPOINT ---
 app.get('/api/auth/verify', async (req, res) => {
   const { token } = req.query;
   
@@ -238,28 +289,6 @@ app.get('/api/auth/verify', async (req, res) => {
   } catch (err) {
     req.log.error({ err }, "Verification process failed");
     res.status(500).json({ error: "Internal server error during verification" });
-  }
-});
-
-// --- 3. USER UPDATE PROFILE ---
-app.patch('/api/user/profile', authenticate, async (req, res) => {
-  const { region_code, industry_key, display_mode } = req.body;
-
-  try {
-    await pool.query(
-      `UPDATE profiles 
-       SET region_code = COALESCE($1, region_code), 
-           industry_key = COALESCE($2, industry_key), 
-           display_mode = COALESCE($3, display_mode),
-           updated_at = CURRENT_TIMESTAMP
-       WHERE user_id = $4`,
-      [region_code ? region_code.toUpperCase() : null, industry_key, display_mode, req.user_id]
-    );
-    req.log.info("Profile updated");
-    res.json({ message: "Profile updated successfully" });
-  } catch (err) {
-    req.log.error({ err }, "Profile update failed");
-    res.status(500).json({ error: "Failed to update profile" });
   }
 });
 
