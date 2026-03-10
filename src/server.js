@@ -229,7 +229,7 @@ app.post('/api/auth/login', async (req, res) => {
       domain: '.77security.com',
       httpOnly: true,
       secure: true,
-      sameSite: 'Lax',
+      sameSite: 'none',
       maxAge: SESSION_DURATION * 1000
     });
     
