@@ -40,7 +40,7 @@ pool.on('error', (err) => logger.error({ err }, 'Unexpected error on idle databa
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST || 'smtp-relay.brevo.com',
   port: parseInt(process.env.SMTP_PORT || '587'),
-  secure: process.env.SMTP_SECURE === 'true' ? true : false, 
+  secure: process.env.SMTP_SECURE === 'true' ? true : true, 
   auth: {
     user: process.env.SMTP_USER || 'a47896001@smtp-brevo.com',
     pass: process.env.SMTP_PASS 
@@ -199,6 +199,40 @@ app.post('/api/auth/register', async (req, res) => {
     // This logs the full stack trace and the context (email)
     req.log.error({ err, email }, "Registration failure");
     res.status(400).json({ error: "Registration failed. Check logs for details." });
+  }
+});
+
+// --- 2. EMAIL VERIFICATION ENDPOINT ---
+app.get('/api/auth/verify', async (req, res) => {
+  const { token } = req.query;
+  
+  if (!token) {
+    return res.status(400).json({ error: "Verification token is required" });
+  }
+
+  // Hash the incoming token to match what's in the DB
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+
+  try {
+    const result = await pool.query(
+      `UPDATE users 
+       SET is_verified = TRUE, 
+           verification_token_hash = NULL 
+       WHERE verification_token_hash = $1 
+       RETURNING id, email`,
+      [tokenHash]
+    );
+
+    if (result.rows.length === 0) {
+      req.log.warn({ tokenHash }, "Invalid or expired verification token attempt");
+      return res.status(400).json({ error: "Invalid or expired verification token" });
+    }
+
+    req.log.info({ userId: result.rows[0].id }, "User email verified successfully");
+    res.json({ message: "Email verified successfully! You can now log in." });
+  } catch (err) {
+    req.log.error({ err }, "Verification process failed");
+    res.status(500).json({ error: "Internal server error during verification" });
   }
 });
 
