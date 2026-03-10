@@ -12,7 +12,13 @@ const logger = require('pino')({
   // In K8s, we want raw JSON. Locally, use pino-pretty.
   transport: process.env.NODE_ENV !== 'production' ? { target: 'pino-pretty' } : undefined
 });
-const pinoHttp = require('pino-http')({ logger });
+const pinoHttp = require('pino-http')({ 
+  logger,
+  // This skips logging for health and ready checks
+  autoLogging: {
+    ignore: (req) => ['/health', '/ready'].includes(req.url)
+  }
+});
 
 const app = express();
 
@@ -118,10 +124,66 @@ app.post('/api/auth/register', async (req, res) => {
       const verifyUrl = `https://identity.77security.com/verify?token=${verificationToken}`;
       
       await transporter.sendMail({
-        from: '"77 Security Identity" <77security@77security.com>',
+        from: `"77 Security" <${process.env.SMTP_USER}>`,
         to: email,
         subject: "Verify your 77 Security account",
-        html: `<div>Verify at ${verifyUrl}</div>`
+        // Text fallback is crucial for deliverability
+        text: `Welcome to 77 Security. Please verify your account by visiting: ${verifyUrl}`,
+        html: `
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Verify Your Account</title>
+          </head>
+          <body style="margin: 0; padding: 0; background-color: #f4f7f6; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;">
+            <table border="0" cellpadding="0" cellspacing="0" width="100%">
+              <tr>
+                <td style="padding: 40px 0 30px 0;" align="center">
+                  <table border="0" cellpadding="0" cellspacing="0" width="600" style="background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
+                    <tr>
+                      <td align="center" style="padding: 40px 0 20px 0; background-color: #0a0a0c;">
+                        <h1 style="color: #ffffff; margin: 0; font-size: 28px; letter-spacing: -1px;">77<span style="color: #10b981;">SECURITY</span></h1>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style="padding: 40px 40px 30px 40px;">
+                        <h2 style="color: #1a1a1a; font-size: 22px; margin-top: 0;">Confirm your email address</h2>
+                        <p style="color: #4a4a4a; font-size: 16px; line-height: 24px;">
+                          Welcome to the 77 Security network. To complete your registration and begin contributing to the open-source threat intelligence ecosystem, please verify your email.
+                        </p>
+                        <table border="0" cellpadding="0" cellspacing="0" width="100%" style="margin-top: 30px;">
+                          <tr>
+                            <td align="center">
+                              <a href="${verifyUrl}" style="background-color: #10b981; color: #ffffff; padding: 16px 32px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 16px; display: inline-block;">Verify Account</a>
+                            </td>
+                          </tr>
+                        </table>
+                        <p style="color: #888888; font-size: 14px; margin-top: 30px; line-height: 20px;">
+                          If you did not sign up for a 77 Security account, you can safely ignore this email.
+                        </p>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style="padding: 30px; background-color: #fafafa; border-top: 1px solid #eeeeee; text-align: center;">
+                        <p style="color: #999999; font-size: 12px; margin: 0;">
+                          Radical Transparency in Security<br>
+                          Built on <a href="https://github.com/77security" style="color: #10b981; text-decoration: none;">GitHub</a>
+                        </p>
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+            </table>
+          </body>
+          </html>
+        `,
+        headers: {
+          'List-Unsubscribe': `<mailto:${process.env.SMTP_USER}?subject=unsubscribe>`,
+          'X-Entity-Ref-ID': crypto.randomBytes(16).toString('hex')
+        }
       });
 
       await client.query('COMMIT');
