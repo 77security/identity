@@ -40,7 +40,7 @@ pool.on('error', (err) => logger.error({ err }, 'Unexpected error on idle databa
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST || 'smtp-relay.brevo.com',
   port: parseInt(process.env.SMTP_PORT || '587'),
-  secure: process.env.SMTP_SECURE === 'false' ? false : true, 
+  secure: process.env.SMTP_SECURE === 'true' ? true : false, 
   auth: {
     user: process.env.SMTP_USER || 'a47896001@smtp-brevo.com',
     pass: process.env.SMTP_PASS 
