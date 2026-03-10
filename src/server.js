@@ -38,11 +38,11 @@ pool.on('error', (err) => logger.error({ err }, 'Unexpected error on idle databa
 
 // --- SMTP CONFIGURATION ---
 const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || 'smtp.larksuite.com',
-  port: parseInt(process.env.SMTP_PORT || '465'),
+  host: process.env.SMTP_HOST || 'smtp-relay.brevo.com',
+  port: parseInt(process.env.SMTP_PORT || '587'),
   secure: process.env.SMTP_SECURE === 'false' ? false : true, 
   auth: {
-    user: process.env.SMTP_USER || '77security@77security.com',
+    user: process.env.SMTP_USER || 'a47896001@smtp-brevo.com',
     pass: process.env.SMTP_PASS 
   }
 });
@@ -124,7 +124,7 @@ app.post('/api/auth/register', async (req, res) => {
       const verifyUrl = `https://identity.77security.com/verify?token=${verificationToken}`;
       
       await transporter.sendMail({
-        from: `"77 Security" <${process.env.SMTP_USER}>`,
+        from: `"77 Security" <77security@77security.com>`,
         to: email,
         subject: "Verify your 77 Security account",
         // Text fallback is crucial for deliverability
