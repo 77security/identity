@@ -17,6 +17,7 @@
     "nodemailer": "^6.9.9",
     "pino": "^8.16.0",
     "pino-http": "^8.5.1",
+    "pino-pretty": "^10.2.3",
     "src": "^1.1.2"
   },
   "devDependencies": {
