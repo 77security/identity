@@ -4,8 +4,20 @@ const bcrypt = require('bcrypt');
 const { Pool } = require('pg');
 const cookieParser = require('cookie-parser');
 const cors = require('cors');
+const nodemailer = require('nodemailer');
+
+// --- LOGGING SETUP ---
+const logger = require('pino')({
+  level: process.env.LOG_LEVEL || 'info',
+  // In K8s, we want raw JSON. Locally, use pino-pretty.
+  transport: process.env.NODE_ENV !== 'production' ? { target: 'pino-pretty' } : undefined
+});
+const pinoHttp = require('pino-http')({ logger });
 
 const app = express();
+
+// Use the logger middleware early to track all requests
+app.use(pinoHttp);
 app.use(express.json());
 app.use(cookieParser());
 
@@ -15,8 +27,20 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false }
 });
 
-// --- STANDARDIZATION CONSTANTS ---
-// These keys match the ref_industries table in init_db.sql
+// Monitor pool errors
+pool.on('error', (err) => logger.error({ err }, 'Unexpected error on idle database client'));
+
+// --- SMTP CONFIGURATION ---
+const transporter = nodemailer.createTransport({
+  host: process.env.SMTP_HOST || 'smtp.larksuite.com',
+  port: parseInt(process.env.SMTP_PORT || '465'),
+  secure: process.env.SMTP_SECURE === 'false' ? false : true, 
+  auth: {
+    user: process.env.SMTP_USER || '77security@77security.com',
+    pass: process.env.SMTP_PASS 
+  }
+});
+
 const VALID_INDUSTRY_KEYS = new Set([
   'CRIT_ENERGY', 'CRIT_WATER', 'FIN_BANK', 'FIN_INS', 'GOV_NAT', 
   'GOV_LOC', 'DEF_BASE', 'HEALTH', 'TECH_SW', 'TECH_HW', 
@@ -27,7 +51,10 @@ const VALID_INDUSTRY_KEYS = new Set([
 // --- HELPER: Auth Middleware ---
 const authenticate = async (req, res, next) => {
   const sessionId = req.cookies.session_id;
-  if (!sessionId) return res.status(401).json({ error: "Authentication required" });
+  if (!sessionId) {
+    req.log.warn("Unauthorized: No session cookie provided");
+    return res.status(401).json({ error: "Authentication required" });
+  }
 
   try {
     const result = await pool.query(
@@ -36,17 +63,21 @@ const authenticate = async (req, res, next) => {
     );
 
     if (result.rows.length === 0) {
+      req.log.warn({ sessionId }, "Session expired or invalid");
       return res.status(401).json({ error: "Session expired or invalid" });
     }
 
     req.user_id = result.rows[0].user_id;
+    // Add userId to all subsequent logs for this request
+    req.log = req.log.child({ userId: req.user_id });
     next();
   } catch (err) {
+    req.log.error({ err }, "Authentication middleware error");
     res.status(500).json({ error: "Authentication middleware error" });
   }
 };
 
-// Health Probes
+// Health Probes (Keep these quiet unless they fail)
 app.get('/health', (req, res) => res.status(200).send('OK'));
 app.get('/ready', (req, res) => res.status(200).send('Ready'));
 
@@ -54,7 +85,6 @@ app.get('/ready', (req, res) => res.status(200).send('Ready'));
 app.post('/api/auth/register', async (req, res) => {
   const { email, password, region_code, industry_key } = req.body;
 
-  // FAIL FAST: Validation
   if (!region_code || region_code.length !== 2) {
     return res.status(400).json({ error: "Invalid region_code. Must be ISO 3166-1 alpha-2." });
   }
@@ -79,39 +109,40 @@ app.post('/api/auth/register', async (req, res) => {
       
       const userId = userResult.rows[0].id;
 
-      // Updated to use industry_key per the new schema
       await client.query(
         `INSERT INTO profiles (user_id, region_code, industry_key, display_mode) 
          VALUES ($1, $2, $3, $4)`,
         [userId, region_code.toUpperCase(), industry_key, 'anonymous']
       );
 
-      await client.query('COMMIT');
-      console.log(`[EMAIL SIMULATION] To: ${email} | Token: ${verificationToken}`);
+      const verifyUrl = `https://identity.77security.com/verify?token=${verificationToken}`;
+      
+      await transporter.sendMail({
+        from: '"77 Security Identity" <77security@77security.com>',
+        to: email,
+        subject: "Verify your 77 Security account",
+        html: `<div>Verify at ${verifyUrl}</div>`
+      });
 
-      res.status(201).json({ message: "Registration successful. Please verify your email." });
+      await client.query('COMMIT');
+      req.log.info({ email, userId }, "User successfully registered");
+      res.status(201).json({ message: "Registration successful. Please check your email to verify." });
     } catch (e) {
       await client.query('ROLLBACK');
-      throw e;
+      throw e; 
     } finally {
       client.release();
     }
   } catch (err) {
-    res.status(400).json({ error: "Registration failed. Email might already be registered." });
+    // This logs the full stack trace and the context (email)
+    req.log.error({ err, email }, "Registration failure");
+    res.status(400).json({ error: "Registration failed. Check logs for details." });
   }
 });
 
 // --- 3. USER UPDATE PROFILE ---
 app.patch('/api/user/profile', authenticate, async (req, res) => {
   const { region_code, industry_key, display_mode } = req.body;
-
-  // Optional Validation if fields are provided
-  if (region_code && region_code.length !== 2) {
-    return res.status(400).json({ error: "Invalid region_code format." });
-  }
-  if (industry_key && !VALID_INDUSTRY_KEYS.has(industry_key)) {
-    return res.status(400).json({ error: "Invalid industry_key." });
-  }
 
   try {
     await pool.query(
@@ -123,8 +154,10 @@ app.patch('/api/user/profile', authenticate, async (req, res) => {
        WHERE user_id = $4`,
       [region_code ? region_code.toUpperCase() : null, industry_key, display_mode, req.user_id]
     );
+    req.log.info("Profile updated");
     res.json({ message: "Profile updated successfully" });
   } catch (err) {
+    req.log.error({ err }, "Profile update failed");
     res.status(500).json({ error: "Failed to update profile" });
   }
 });
@@ -142,18 +175,16 @@ app.get('/api/user/me', authenticate, async (req, res) => {
     );
     res.json(result.rows[0]);
   } catch (err) {
+    req.log.error({ err }, "Fetch 'me' failed");
     res.status(500).json({ error: "Could not fetch user info" });
   }
 });
-
-// ... [Existing Login, Verification, and API Key logic remains the same] ...
 
 const corsOptions = {
   origin: /https?:\/\/(([^/]+\.)?77security\.com)$/i,
   credentials: true
 };
-
 app.use(cors(corsOptions));
 
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => console.log(`77 Security Identity API running on port ${PORT}`));
+app.listen(PORT, () => logger.info(`77 Security Identity API running on port ${PORT}`));
