@@ -41,6 +41,14 @@ const pool = new Pool({
 // Monitor pool errors
 pool.on('error', (err) => logger.error({ err }, 'Unexpected error on idle database client'));
 
+// Initialize Redis Client for Sessions
+const redisClient = createClient({
+  url: process.env.REDIS_URL || 'redis://session-store-redis-master.default.svc.cluster.local:6379'
+});
+
+redisClient.on('error', err => console.error('Redis Client Error', err));
+redisClient.connect().then(() => console.log('Connected to Redis Session Store'));
+
 // --- SMTP CONFIGURATION ---
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST || 'smtp-relay.brevo.com',
@@ -62,29 +70,17 @@ const VALID_INDUSTRY_KEYS = new Set([
 // --- HELPER: Auth Middleware ---
 const authenticate = async (req, res, next) => {
   const sessionId = req.cookies.session_id;
-  if (!sessionId) {
-    req.log.warn("Unauthorized: No session cookie provided");
-    return res.status(401).json({ error: "Authentication required" });
-  }
-
+  if (!sessionId) return res.status(401).json({ error: "Authentication required" });
+  
   try {
-    const result = await pool.query(
-      'SELECT user_id FROM sessions WHERE id = $1 AND expires_at > NOW()',
-      [sessionId]
-    );
-
-    if (result.rows.length === 0) {
-      req.log.warn({ sessionId }, "Session expired or invalid");
-      return res.status(401).json({ error: "Session expired or invalid" });
-    }
-
-    req.user_id = result.rows[0].user_id;
-    // Add userId to all subsequent logs for this request
-    req.log = req.log.child({ userId: req.user_id });
+    const userId = await redisClient.get(`session:${sessionId}`);
+    if (!userId) return res.status(401).json({ error: "Session expired" });
+    
+    req.user_id = userId;
     next();
   } catch (err) {
-    req.log.error({ err }, "Authentication middleware error");
-    res.status(500).json({ error: "Authentication middleware error" });
+    console.error('Auth Error:', err);
+    res.status(500).json({ error: "Auth system error" });
   }
 };
 
@@ -213,25 +209,33 @@ app.post('/api/auth/login', async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
     const user = result.rows[0];
+    
     if (!user || !(await bcrypt.compare(password, user.password_hash))) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
+    
     if (!user.is_verified) return res.status(403).json({ error: "Verify email first" });
 
     const sessionId = crypto.randomBytes(32).toString('hex');
-    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
-    await pool.query('INSERT INTO sessions (id, user_id, expires_at) VALUES ($1, $2, $3)', [sessionId, user.id, expiresAt]);
+    const SESSION_DURATION = 24 * 60 * 60; // 24 Hours in seconds
+    
+    // Store session in Redis with Expiration (TTL)
+    await redisClient.set(`session:${sessionId}`, user.id, {
+      EX: SESSION_DURATION
+    });
 
     res.cookie('session_id', sessionId, {
       domain: '.77security.com',
       httpOnly: true,
       secure: true,
       sameSite: 'Lax',
-      expires: expiresAt
+      maxAge: SESSION_DURATION * 1000
     });
+    
     res.json({ message: "Logged in" });
   } catch (err) {
-    res.status(500).json({ error: "Login error" });
+    console.error('[LOGIN SYSTEM ERROR]', err);
+    res.status(500).json({ error: "Login error", details: err.message });
   }
 });
 
