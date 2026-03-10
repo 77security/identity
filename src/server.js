@@ -21,6 +21,11 @@ const pinoHttp = require('pino-http')({
 });
 
 const app = express();
+const corsOptions = {
+  origin: /https?:\/\/(([^/]+\.)?77security\.com)$/i,
+  credentials: true
+};
+app.use(cors(corsOptions));
 
 // Use the logger middleware early to track all requests
 app.use(pinoHttp);
@@ -121,7 +126,7 @@ app.post('/api/auth/register', async (req, res) => {
         [userId, region_code.toUpperCase(), industry_key, 'anonymous']
       );
 
-      const verifyUrl = `https://identity.77security.com/verify?token=${verificationToken}`;
+      const verifyUrl = `https://www.77security.com/?token=${verificationToken}`;
       
       await transporter.sendMail({
         from: `"77 Security" <77security@77security.com>`,
@@ -275,12 +280,6 @@ app.get('/api/user/me', authenticate, async (req, res) => {
     res.status(500).json({ error: "Could not fetch user info" });
   }
 });
-
-const corsOptions = {
-  origin: /https?:\/\/(([^/]+\.)?77security\.com)$/i,
-  credentials: true
-};
-app.use(cors(corsOptions));
 
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => logger.info(`77 Security Identity API running on port ${PORT}`));
