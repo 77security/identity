@@ -129,7 +129,6 @@ app.post('/api/auth/register', async (req, res) => {
         from: `"77 Security" <77security@77security.com>`,
         to: email,
         subject: "Verify your 77 Security account",
-        // Text fallback is crucial for deliverability
         text: `Welcome to 77 Security. Please verify your account by visiting: ${verifyUrl}`,
         html: `
           <!DOCTYPE html>
@@ -198,7 +197,6 @@ app.post('/api/auth/register', async (req, res) => {
       client.release();
     }
   } catch (err) {
-    // This logs the full stack trace and the context (email)
     req.log.error({ err, email }, "Registration failure");
     res.status(400).json({ error: "Registration failed. Check logs for details." });
   }
@@ -220,7 +218,6 @@ app.post('/api/auth/login', async (req, res) => {
     const sessionId = crypto.randomBytes(32).toString('hex');
     const SESSION_DURATION = 24 * 60 * 60; // 24 Hours in seconds
     
-    // Store session in Redis with Expiration (TTL)
     await redisClient.set(`session:${sessionId}`, user.id, {
       EX: SESSION_DURATION
     });
@@ -238,6 +235,31 @@ app.post('/api/auth/login', async (req, res) => {
     console.error('[LOGIN SYSTEM ERROR]', err);
     res.status(500).json({ error: "Login error", details: err.message });
   }
+});
+
+// (2.1) LOGOUT - New Endpoint added below login
+app.post('/api/auth/logout', async (req, res) => {
+  const sessionId = req.cookies.session_id;
+  
+  if (sessionId) {
+    try {
+      // Invalidate the session in Redis
+      await redisClient.del(`session:${sessionId}`);
+      req.log.info({ sessionId }, "Session deleted from Redis during logout");
+    } catch (err) {
+      req.log.error({ err, sessionId }, "Error deleting session from Redis");
+    }
+  }
+
+  // Clear the cookie regardless of whether Redis deletion succeeded
+  res.clearCookie('session_id', {
+    domain: '.77security.com',
+    httpOnly: true,
+    secure: true,
+    sameSite: 'none'
+  });
+
+  res.json({ message: "Logged out successfully" });
 });
 
 // --- 3. USER UPDATE PROFILE ---
@@ -271,7 +293,6 @@ app.get('/api/auth/verify', async (req, res) => {
     return res.status(400).json({ error: "Verification token is required" });
   }
 
-  // Hash the incoming token to match what's in the DB
   const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
 
   try {
