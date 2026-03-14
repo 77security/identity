@@ -45,7 +45,7 @@ spec:
               containerPort: {{ .Values.service.targetPort }}
               protocol: TCP
           env:
-            - name: DATABASE_URL
+            - name: DATABASE_PASS
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.env.databaseSecretName }}
