@@ -35,7 +35,11 @@ app.use(cookieParser());
 
 // Database connection
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  host: '77security.postgres.database.azure.com',
+  user: 'postgresql',
+  password: process.env.DATABASE_PASS,
+  database: 'identity',
+  port: 5432,
   ssl: { rejectUnauthorized: false }
 });
 
